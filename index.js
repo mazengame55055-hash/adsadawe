@@ -31,6 +31,7 @@ const QUALITY_PRESETS = {
 };
 
 let selectedQuality = QUALITY_PRESETS.ultra;
+let directMode = false;
 let currentChannelName = null;
 let abortController = null;
 let channelsCache = null;
@@ -175,7 +176,14 @@ client.on('messageCreate', async (message) => {
 
             try { if (fs.existsSync(ffmpegPath)) fs.chmodSync(ffmpegPath, 0o777); } catch (_) {}
 
-            ffmpegProcess = spawn(ffmpegPath, [
+            const ffArgs = directMode ? [
+                '-analyzeduration', '500000', '-probesize', '500000',
+                '-f', 'mpegts', '-i', 'pipe:0',
+                '-c:v', 'copy',
+                '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
+                '-f', 'mpegts', '-flags', '+low_delay', '-fflags', 'nobuffer',
+                'pipe:1',
+            ] : [
                 '-analyzeduration', '500000', '-probesize', '500000',
                 '-f', 'mpegts', '-i', 'pipe:0',
                 '-preset', 'ultrafast', '-tune', 'zerolatency',
@@ -187,7 +195,8 @@ client.on('messageCreate', async (message) => {
                 '-f', 'mpegts', '-flags', '+low_delay', '-fflags', 'nobuffer',
                 '-threads', '1', '-muxdelay', '0', '-muxpreload', '0',
                 'pipe:1',
-            ], { stdio: ['pipe', 'pipe', 'pipe'] });
+            ];
+            ffmpegProcess = spawn(ffmpegPath, ffArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
 
             ffmpegProcess.stdin.on('error', () => {});
             const input = Readable.fromWeb(response.body);
@@ -204,14 +213,21 @@ client.on('messageCreate', async (message) => {
             return await sendMsg(message.channelId, `🎥 **${channel.name}** انتهى.`);
         }
 
+        if (c === '!direct') {
+            directMode = !directMode;
+            return await sendMsg(message.channelId, directMode ? '✅ **Direct mode** (نسخ الفيديو بدون إعادة تشفير)' : '✅ **Transcode mode** (إعادة تشفير)');
+        }
+
         if (c === '!stop') return await stopPlaying(message);
         if (c === '!help') return await sendMsg(message.channelId, [
             '🤖 **الأوامر:**', '', '!tv - القنوات', '!play <رقم> - تشغيل',
-            '!stop - إيقاف', '!quality <ultra|low|medium|high> - الجودة', '!status - الحالة', '!help - المساعدة',
+            '!stop - إيقاف', '!direct - وضع مباشر (بدون إعادة تشفير)', '!quality <ultra|low|medium|high> - الجودة',
+            '!status - الحالة', '!help - المساعدة',
         ].join('\n'));
         if (c === '!status') return await sendMsg(message.channelId, 
             (isPlaying ? `🎥 **يشتغل:** ${currentChannelName || 'قناة'}` : '🛑 **متوقف**') +
-            `\n📐 ${selectedQuality.width}x${selectedQuality.height} @ ${selectedQuality.fps}fps`
+            `\n📐 ${selectedQuality.width}x${selectedQuality.height} @ ${selectedQuality.fps}fps` +
+            `\n⚙️ ${directMode ? 'Direct (نسخ)' : 'Transcode (تشفير)'}`
         );
 
     } catch (err) {
