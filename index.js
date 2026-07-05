@@ -2,7 +2,6 @@ const { Client } = require('discord.js-selfbot-v13');
 const { Streamer, playStream } = require('@dank074/discord-video-stream');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
-const { Readable } = require('stream');
 
 const client = new Client({
     intents: 33281,
@@ -33,7 +32,6 @@ const QUALITY_PRESETS = {
 let selectedQuality = QUALITY_PRESETS.ultra;
 let directMode = false;
 let currentChannelName = null;
-let abortController = null;
 let channelsCache = null;
 let isPlaying = false;
 let ffmpegProcess = null;
@@ -110,9 +108,63 @@ async function showChannelsPage(message, channels, page) {
     ].filter(Boolean).join('\n'));
 }
 
+async function playChannelSegmented(message, channel) {
+    await streamer.joinVoice(GUILD_ID, VOICE_ID);
+    const tmpDir = '/tmp/iptv';
+    fs.mkdirSync(tmpDir, { recursive: true });
+    let segNum = 0;
+
+    while (isPlaying) {
+        segNum++;
+        const outFile = `${tmpDir}/seg_${segNum}.ts`;
+
+        // Step 1: download + encode chunk (no real-time constraint)
+        const ffArgs = directMode ? [
+            '-i', channel.url, '-t', '30',
+            '-c:v', 'copy', '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
+            '-f', 'mpegts', '-y', outFile,
+        ] : [
+            '-i', channel.url, '-t', '30',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+            '-pix_fmt', 'yuv420p',
+            '-b:v', selectedQuality.vb, '-maxrate', selectedQuality.maxrate,
+            '-bufsize', selectedQuality.bufsize, '-crf', '35',
+            '-r', String(selectedQuality.fps), '-vsync', 'cfr',
+            '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
+            '-f', 'mpegts', '-y', outFile,
+        ];
+
+        const proc = spawn(ffmpegPath, ffArgs);
+        ffmpegProcess = proc;
+        proc.stderr.on('data', d => {});
+        try {
+            await new Promise((resolve, reject) => {
+                proc.on('exit', code => code === 0 ? resolve() : reject(new Error(`FFmpeg exit ${code}`)));
+                proc.on('error', reject);
+            });
+        } catch (e) {
+            if (!isPlaying) break;
+            throw e;
+        }
+        if (!isPlaying) break;
+
+        // Step 2: stream the processed chunk to Discord
+        const fileStream = fs.createReadStream(outFile);
+        await playStream(fileStream, streamer, {
+            type: 'go-live', format: 'mpegts',
+            width: selectedQuality.width, height: selectedQuality.height,
+            frameRate: selectedQuality.fps,
+        });
+
+        // Cleanup
+        try { fs.unlinkSync(outFile); } catch (_) {}
+    }
+
+    currentChannelName = null; isPlaying = false; ffmpegProcess = null;
+}
+
 async function stopPlaying(message) {
     if (ffmpegProcess) { ffmpegProcess.kill('SIGKILL'); ffmpegProcess = null; }
-    if (abortController) { abortController.abort(); abortController = null; }
     streamer.stopStream(); streamer.leaveVoice();
     const name = currentChannelName; currentChannelName = null; isPlaying = false;
     if (message) await sendMsg(message.channelId, `🛑 تم إيقاف ${name ? `**${name}**` : 'البث'}.`);
@@ -160,57 +212,22 @@ client.on('messageCreate', async (message) => {
             }
             console.log(`Found channel: ${channel.name}, url: ${channel.url.substring(0,50)}...`);
 
-            abortController = new AbortController();
             currentChannelName = channel.name; isPlaying = true;
             console.log('Sending status message...');
             await sendMsg(message.channelId, `⏳ **${channel.name}**...`);
-            console.log('Status sent, joining voice...');
-            await streamer.joinVoice(GUILD_ID, VOICE_ID);
-            console.log(`Starting: ${channel.name}`);
+            console.log('Status sent, starting segment loop...');
 
-            const response = await fetch(channel.url, {
-                headers: { 'User-Agent': 'Mozilla/5.0' },
-                signal: abortController.signal,
-            });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            try { if (fs.existsSync(ffmpegPath)) fs.chmodSync(ffmpegPath, 0o777); } catch (_) {}
-
-            const ffArgs = directMode ? [
-                '-analyzeduration', '500000', '-probesize', '500000',
-                '-f', 'mpegts', '-i', 'pipe:0',
-                '-c:v', 'copy',
-                '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
-                '-f', 'mpegts', '-flags', '+low_delay', '-fflags', 'nobuffer',
-                'pipe:1',
-            ] : [
-                '-analyzeduration', '500000', '-probesize', '500000',
-                '-f', 'mpegts', '-i', 'pipe:0',
-                '-preset', 'ultrafast', '-tune', 'zerolatency',
-                '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-                '-b:v', selectedQuality.vb, '-maxrate', selectedQuality.maxrate,
-                '-bufsize', selectedQuality.bufsize, '-crf', '35',
-                '-r', String(selectedQuality.fps), '-vsync', 'cfr',
-                '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
-                '-f', 'mpegts', '-flags', '+low_delay', '-fflags', 'nobuffer',
-                '-threads', '1', '-muxdelay', '0', '-muxpreload', '0',
-                'pipe:1',
-            ];
-            ffmpegProcess = spawn(ffmpegPath, ffArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-
-            ffmpegProcess.stdin.on('error', () => {});
-            const input = Readable.fromWeb(response.body);
-            input.on('error', () => {});
-            input.pipe(ffmpegProcess.stdin);
-            ffmpegProcess.on('exit', (code) => { console.log(`FFmpeg exit ${code}`); ffmpegProcess = null; });
-            abortController.signal.addEventListener('abort', () => { if (ffmpegProcess) ffmpegProcess.kill('SIGKILL'); });
-
-            await playStream(ffmpegProcess.stdout, streamer, {
-                type: 'go-live', format: 'mpegts',
-                width: selectedQuality.width, height: selectedQuality.height, frameRate: selectedQuality.fps,
-            });
-            isPlaying = false;
-            return await sendMsg(message.channelId, `🎥 **${channel.name}** انتهى.`);
+            try {
+                await playChannelSegmented(message, channel);
+                await sendMsg(message.channelId, `🎥 **${channel.name}** انتهى.`);
+            } catch (err) {
+                if (err.name === 'AbortError') return;
+                console.error('playChannelSegmented error:', err.message);
+                isPlaying = false;
+                streamer.stopStream(); streamer.leaveVoice();
+                try { await sendMsg(message.channelId, `❌ ${err.message}`); } catch (_) {}
+            }
+            return;
         }
 
         if (c === '!direct') {
