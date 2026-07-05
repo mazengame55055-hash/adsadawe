@@ -24,12 +24,13 @@ const IPTV = {
 const M3U_URL = `${IPTV.host}:${IPTV.port}/get.php?username=${IPTV.user}&password=${IPTV.pass}&type=m3u_plus&output=ts`;
 
 const QUALITY_PRESETS = {
+    ultra: { width: 480, height: 270, fps: 10, vb: '200k', maxrate: '300k', bufsize: '300k' },
     low: { width: 640, height: 360, fps: 15, vb: '400k', maxrate: '600k', bufsize: '600k' },
     medium: { width: 854, height: 480, fps: 20, vb: '800k', maxrate: '1000k', bufsize: '1000k' },
     high: { width: 1280, height: 720, fps: 25, vb: '1200k', maxrate: '1500k', bufsize: '1500k' },
 };
 
-let selectedQuality = QUALITY_PRESETS.low;
+let selectedQuality = QUALITY_PRESETS.ultra;
 let currentChannelName = null;
 let abortController = null;
 let channelsCache = null;
@@ -140,7 +141,7 @@ client.on('messageCreate', async (message) => {
 
         if (c.startsWith('!quality ')) {
             const preset = c.split(' ')[1];
-            if (!QUALITY_PRESETS[preset]) return sendMsg(message.channelId, '❌ low, medium, high');
+            if (!QUALITY_PRESETS[preset]) return sendMsg(message.channelId, '❌ ultra, low, medium, high');
             selectedQuality = QUALITY_PRESETS[preset];
             return await sendMsg(message.channelId, `✅ ${preset} (${selectedQuality.width}x${selectedQuality.height}, ${selectedQuality.fps}fps)`);
         }
@@ -179,8 +180,10 @@ client.on('messageCreate', async (message) => {
                 '-f', 'mpegts', '-i', 'pipe:0',
                 '-preset', 'ultrafast', '-tune', 'zerolatency',
                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-                '-b:v', selectedQuality.vb, '-maxrate', selectedQuality.maxrate, '-bufsize', selectedQuality.bufsize,
-                '-c:a', 'libopus', '-b:a', '64k', '-ac', '1',
+                '-b:v', selectedQuality.vb, '-maxrate', selectedQuality.maxrate,
+                '-bufsize', selectedQuality.bufsize, '-crf', '35',
+                '-r', String(selectedQuality.fps), '-vsync', 'cfr',
+                '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
                 '-f', 'mpegts', '-flags', '+low_delay', '-fflags', 'nobuffer',
                 '-threads', '1', '-muxdelay', '0', '-muxpreload', '0',
                 'pipe:1',
@@ -204,7 +207,7 @@ client.on('messageCreate', async (message) => {
         if (c === '!stop') return await stopPlaying(message);
         if (c === '!help') return await sendMsg(message.channelId, [
             '🤖 **الأوامر:**', '', '!tv - القنوات', '!play <رقم> - تشغيل',
-            '!stop - إيقاف', '!quality <low|medium|high> - الجودة', '!status - الحالة', '!help - المساعدة',
+            '!stop - إيقاف', '!quality <ultra|low|medium|high> - الجودة', '!status - الحالة', '!help - المساعدة',
         ].join('\n'));
         if (c === '!status') return await sendMsg(message.channelId, 
             (isPlaying ? `🎥 **يشتغل:** ${currentChannelName || 'قناة'}` : '🛑 **متوقف**') +
