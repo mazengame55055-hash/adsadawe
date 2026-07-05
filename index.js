@@ -15,12 +15,13 @@ const OWNER_ID = '820408813790167041';
 
 const IPTV = {
     host: 'http://ugeen.live',
+    ip: 'http://176.123.9.60',
     port: '8080',
     user: 'Ugeen_VIP1pjmEs',
     pass: 'v0CvBh',
 };
 
-const M3U_URL = `${IPTV.host}:${IPTV.port}/get.php?username=${IPTV.user}&password=${IPTV.pass}&type=m3u_plus&output=ts`;
+const M3U_URL = `${IPTV.ip}:${IPTV.port}/get.php?username=${IPTV.user}&password=${IPTV.pass}&type=m3u_plus&output=ts`;
 
 const QUALITY_PRESETS = {
     ultra: { width: 480, height: 270, fps: 10, vb: '200k', maxrate: '300k', bufsize: '300k' },
@@ -71,7 +72,8 @@ function parseM3U(m3uText) {
             const nameMatch = trimmed.match(/tvg-name="([^"]*)"/) || trimmed.match(/,([^,]+)$/);
             if (nameMatch) { currentName = nameMatch[1].trim(); }
         } else if (trimmed.startsWith('http') && currentName) {
-            channels[String(index)] = { name: currentName, url: trimmed };
+            const url = trimmed.replace('ugeen.live', '176.123.9.60');
+            channels[String(index)] = { name: currentName, url };
             index++; currentName = null;
         }
     }

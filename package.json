@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "postinstall": "node patch.js",
-    "start": "node index.js"
+    "ffmpeg-install": "apt-get update -qq && apt-get install -y -qq ffmpeg",
+    "start": "apt-get update -qq && apt-get install -y -qq ffmpeg && node index.js"
   },
   "type": "commonjs",
   "dependencies": {
