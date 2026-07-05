@@ -79,15 +79,30 @@ function parseM3U(m3uText) {
 }
 
 async function fetchChannels() {
-    try {
-        const response = await fetch(M3U_URL);
-        channelsCache = parseM3U(await response.text());
-        console.log(`Fetched ${Object.keys(channelsCache).length} channels`);
-        return channelsCache;
-    } catch (err) {
-        console.error('Failed to fetch M3U:', err.message);
-        return channelsCache || null;
+    if (channelsCache) return channelsCache;
+    const urls = [
+        M3U_URL,
+        M3U_URL.replace('&output=ts', ''),
+        `${IPTV.host}:${IPTV.port}/get.php?username=${IPTV.user}&password=${IPTV.pass}&type=m3u`,
+    ];
+    for (const url of urls) {
+        try {
+            const response = await fetch(url, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                signal: AbortSignal.timeout(10000),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            if (!text.startsWith('#EXTM3U')) throw new Error('Not M3U');
+            channelsCache = parseM3U(text);
+            console.log(`Fetched ${Object.keys(channelsCache).length} channels`);
+            return channelsCache;
+        } catch (e) {
+            console.error(`Failed with URL: ${url.slice(0, 80)}... ${e.message}`);
+        }
     }
+    if (channelsCache) return channelsCache;
+    throw new Error('تعذر جلب القنوات من السيرفر');
 }
 
 const PAGE_SIZE = 30;
