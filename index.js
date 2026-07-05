@@ -208,7 +208,7 @@ client.on('ready', async () => {
     console.log(`Logged in as: ${client.user.tag}`);
     if (ffmpegPath) console.log(`FFmpeg: ${ffmpegPath}`);
     else console.log('FFmpeg not found, using direct mode');
-    await fetchChannels();
+    try { await fetchChannels(); } catch (_) {}
 });
 
 client.on('messageCreate', async (message) => {
