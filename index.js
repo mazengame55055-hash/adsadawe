@@ -53,12 +53,11 @@ function findFfmpeg() {
 const ffmpegPath = findFfmpeg();
 
 async function sendMsg(channelId, content) {
-    const res = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages`, {
-        method: 'POST',
-        headers: { 'Authorization': TOKEN, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-    });
-    if (!res.ok) console.error(`sendMsg HTTP ${res.status}`);
+    const channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId).catch(() => null);
+    if (!channel) return console.error('sendMsg: channel not found');
+    const timeout = setTimeout(() => console.log('sendMsg timeout (ignored)'), 5000);
+    try { await channel.send(content); } catch (e) { console.error('sendMsg error:', e.message); }
+    clearTimeout(timeout);
 }
 
 function parseM3U(m3uText) {
