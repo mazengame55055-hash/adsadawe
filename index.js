@@ -112,19 +112,17 @@ async function playChannelSegmented(message, channel) {
     await streamer.joinVoice(GUILD_ID, VOICE_ID);
     const tmpDir = '/tmp/iptv';
     fs.mkdirSync(tmpDir, { recursive: true });
-    let segNum = 0;
 
-    while (isPlaying) {
-        segNum++;
-        const outFile = `${tmpDir}/seg_${segNum}.ts`;
+    const SEG = 60; // seconds per segment
 
-        // Step 1: download + encode chunk (no real-time constraint)
+    function produceSeg(num) {
+        const outFile = `${tmpDir}/seg_${num}.ts`;
         const ffArgs = directMode ? [
-            '-i', channel.url, '-t', '30',
+            '-i', channel.url, '-t', String(SEG),
             '-c:v', 'copy', '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
             '-f', 'mpegts', '-y', outFile,
         ] : [
-            '-i', channel.url, '-t', '30',
+            '-i', channel.url, '-t', String(SEG),
             '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
             '-pix_fmt', 'yuv420p',
             '-b:v', selectedQuality.vb, '-maxrate', selectedQuality.maxrate,
@@ -133,31 +131,50 @@ async function playChannelSegmented(message, channel) {
             '-c:a', 'libopus', '-b:a', '48k', '-ac', '1',
             '-f', 'mpegts', '-y', outFile,
         ];
-
         const proc = spawn(ffmpegPath, ffArgs);
         ffmpegProcess = proc;
-        proc.stderr.on('data', d => {});
-        try {
-            await new Promise((resolve, reject) => {
-                proc.on('exit', code => code === 0 ? resolve() : reject(new Error(`FFmpeg exit ${code}`)));
-                proc.on('error', reject);
-            });
-        } catch (e) {
-            if (!isPlaying) break;
-            throw e;
-        }
-        if (!isPlaying) break;
+        proc.stderr.on('data', () => {});
+        const p = new Promise((resolve, reject) => {
+            proc.on('exit', code => code === 0 ? resolve(outFile) : reject(new Error(`FFmpeg exit ${code}`)));
+            proc.on('error', reject);
+        });
+        return { file: outFile, promise: p, proc };
+    }
 
-        // Step 2: stream the processed chunk to Discord
-        const fileStream = fs.createReadStream(outFile);
+    let segNum = 0;
+
+    // Produce first segment
+    console.log(`Producing seg ${++segNum} (${SEG}s)...`);
+    let current = produceSeg(segNum);
+    let currentFile;
+    try { currentFile = await current.promise; } catch (e) { if (!isPlaying) return; throw e; }
+    if (!isPlaying) return;
+
+    // Start producing next segment in background
+    let next = produceSeg(++segNum);
+
+    while (isPlaying) {
+        // Play current
+        const fileStream = fs.createReadStream(currentFile);
         await playStream(fileStream, streamer, {
             type: 'go-live', format: 'mpegts',
             width: selectedQuality.width, height: selectedQuality.height,
             frameRate: selectedQuality.fps,
         });
+        if (!isPlaying) break;
 
-        // Cleanup
-        try { fs.unlinkSync(outFile); } catch (_) {}
+        // Wait for next segment to be ready
+        console.log('Waiting for next segment...');
+        let nextFile;
+        try { nextFile = await next.promise; } catch (e) { if (!isPlaying) break; throw e; }
+        if (!isPlaying) break;
+
+        // Cleanup old
+        try { fs.unlinkSync(currentFile); } catch (_) {}
+
+        // Swap
+        currentFile = nextFile;
+        next = produceSeg(++segNum);
     }
 
     currentChannelName = null; isPlaying = false; ffmpegProcess = null;
