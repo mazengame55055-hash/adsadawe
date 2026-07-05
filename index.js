@@ -10,8 +10,8 @@ const client = new Client({
 const streamer = new Streamer(client);
 
 const TOKEN = process.env.TOKEN;
-const GUILD_ID = '1324034047613079574';
-const VOICE_ID = '1523144226156576950';
+const GUILD_ID = '1483113341160259806';
+const VOICE_ID = '1483120294917963891';
 const OWNER_ID = '820408813790167041';
 
 const IPTV = {
